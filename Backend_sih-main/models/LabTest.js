@@ -21,6 +21,7 @@ const labTestSchema = new mongoose.Schema({
   result: { type: String, enum: ['Pass','Fail','Conditional'], required: true },
   failReasons: [String],   // e.g., ["MoistureHigh","PesticideAboveThreshold"]
   certificateUrl: String,  // path to PDF or uploaded report
+  certificateId: String,   // unique certificate identifier
   txRef: String,
   qrCode: { type: String }             // blockchain transaction id / chaincode tx id
 }, { timestamps: true });

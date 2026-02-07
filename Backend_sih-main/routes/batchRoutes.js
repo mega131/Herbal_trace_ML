@@ -5,6 +5,20 @@ const QRCode = require("qrcode");
 const Batch = require("../models/Batch");
 const Processor = require("../models/Processor");
 
+// List recent batches (for dashboards/testing)
+router.get("/", async (req, res) => {
+  try {
+    const limit = Number(req.query.limit) || 50;
+    const batches = await Batch.find({})
+      .populate({ path: "farmer", select: "name contactNumber farmLocation crops totalHarvested seasonalHarvest smartContractAddress" })
+      .sort({ createdAt: -1 })
+      .limit(limit);
+    res.json({ batches });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.get("/:batchId", async (req, res) => {
   try {
     const batch = await Batch.findOne({ batchId: req.params.batchId })

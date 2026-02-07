@@ -1,27 +1,45 @@
 const Processor = require('../models/Processor');
 const Batch = require('../models/Batch');
-const QRCode = require('qrcode');
-const Farmer = require('../models/Farmer');
-const Agency = require('../models/Agency');
 const LabTest = require('../models/LabTest');
 
-exports.createProcessorRecord = async (req, res) => {
+// ----------------------
+// Create Processing Record
+exports.createProcessingRecord = async (req, res) => {
   try {
-    const { batchId, finalProductBatchId, herbName, partUsed, quantityProcessed,
-      dryingMethod, extractionMethod, productName, formulationType, expiryDate, finalLabCheck } = req.body;
+    const {
+      batchIds,
+      labTestId,
+      herbName,
+      partUsed,
+      quantityProcessed,
+      dryingMethod,
+      extractionMethod,
+      productName,
+      formulationType,
+      expiryDate
+    } = req.body;
 
-    // ✅ Check required fields
-    if (!batchId || !herbName || !productName) {
-      return res.status(400).json({ error: 'batchId, herbName, and productName are required' });
+    // Validate batches exist
+    const batches = await Batch.find({ _id: { $in: batchIds } });
+    if (batches.length !== batchIds.length) {
+      return res.status(400).json({ message: 'One or more batches not found' });
     }
 
-    // ✅ Make sure batch exists
-    const batch = await Batch.findOne({ batchId });
-    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    // Validate lab test if provided
+    if (labTestId) {
+      const labTest = await LabTest.findById(labTestId);
+      if (!labTest) {
+        return res.status(400).json({ message: 'Lab test not found' });
+      }
+    }
 
-    // ✅ Create Processor document
+    // Generate final product batch ID
+    const finalProductBatchId = `PRODUCT-${Date.now()}-${Math.random().toString(36).substr(2, 5).toUpperCase()}`;
+
+    // Create processing record
     const processor = new Processor({
-      batches: [batch._id],        // link batch object
+      batches: batchIds,
+      labTestId,
       finalProductBatchId,
       herbName,
       partUsed,
@@ -30,84 +48,152 @@ exports.createProcessorRecord = async (req, res) => {
       extractionMethod,
       productName,
       formulationType,
-      expiryDate,
-      finalLabCheck
+      expiryDate: expiryDate ? new Date(expiryDate) : null
     });
 
-    // ✅ Save first to get _id
     await processor.save();
 
-    // ✅ Update batch to link processor
-    batch.processorId = processor._id;
-    await batch.save();
-
-    // ---------------------------
-    // Generate Final QR with all info
-    // ---------------------------
-    const farmer = await Farmer.findById(batch.farmer);
-    const agency = batch.agency ? await Agency.findById(batch.agency) : null;
-    const labTest = batch.labTestId ? await LabTest.findById(batch.labTestId) : null;
-
-    const finalPayload = {
-      batch: {
-        batchId: batch.batchId,
-        species: batch.species,
-        quantity: batch.quantity,
-        status: batch.status,
-        geoTag: batch.geoTag
-      },
-      farmer: farmer ? {
-        name: farmer.name,
-        contactNumber: farmer.contactNumber,
-        farmLocation: farmer.farmLocation,
-        totalHarvested: farmer.totalHarvested
-      } : null,
-      agency: agency ? {
-        name: agency.name,
-        contactNumber: agency.contactNumber,
-        location: agency.location
-      } : null,
-      labTest: labTest ? {
-        labName: labTest.labName,
-        result: labTest.result,
-        failReasons: labTest.failReasons
-      } : null,
-      processor: {
-        finalProductBatchId,
-        herbName,
-        partUsed,
-        quantityProcessed,
-        dryingMethod,
-        extractionMethod,
-        productName,
-        formulationType,
-        expiryDate,
-        finalLabCheck
+    // Update batch statuses
+    await Batch.updateMany(
+      { _id: { $in: batchIds } },
+      { 
+        $set: { 
+          status: 'processed',
+          processorId: processor._id
+        },
+        $push: {
+          history: {
+            step: 'Processing Completed',
+            date: new Date(),
+            by: 'Manufacturer',
+            remarks: `Final product: ${productName}`
+          }
+        }
       }
-    };
+    );
 
-    // Generate QR code with all info
-    // processor.qrCodeDataUrl = await QRCode.toDataURL(JSON.stringify(finalPayload, null, 2));
-    const url = `https://ai-herb-tracker.onrender.com/batch/${batch.batchId}`;
-    const qrCodeDataUrl = await QRCode.toDataURL(url);
-
-    res.status(201).json({ 
-      message: 'Processing + Manufacturing data saved with final QR',
-      processor,
-      finalQR: processor.qrCodeDataUrl
-    });
-
+    res.status(201).json({ message: 'Processing record created successfully', processor });
   } catch (err) {
-    console.error('Processor creation error:', err);
     res.status(500).json({ error: err.message });
   }
 };
 
-// GET records by batchId
-exports.getProcessorRecords = async (req, res) => {
+// ----------------------
+// Get Processing Records
+exports.getProcessingRecords = async (req, res) => {
   try {
-    const processorRecords = await Processor.find({ batches: req.params.batchId });
-    res.json(processorRecords);
+    const processors = await Processor.find()
+      .populate('batches', 'batchId species quantity')
+      .populate('labTestId', 'result testDate')
+      .sort({ createdAt: -1 });
+
+    res.json({ processors });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ----------------------
+// Get Processing Record by ID
+exports.getProcessingRecordById = async (req, res) => {
+  try {
+    const { processorId } = req.params;
+    
+    const processor = await Processor.findById(processorId)
+      .populate('batches', 'batchId species quantity geoTag farmer')
+      .populate('labTestId', 'result testDate parameters');
+
+    if (!processor) {
+      return res.status(404).json({ message: 'Processing record not found' });
+    }
+
+    res.json({ processor });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ----------------------
+// Update Processing Record
+exports.updateProcessingRecord = async (req, res) => {
+  try {
+    const { processorId } = req.params;
+    const updateData = req.body;
+
+    const processor = await Processor.findByIdAndUpdate(
+      processorId,
+      updateData,
+      { new: true, runValidators: true }
+    );
+
+    if (!processor) {
+      return res.status(404).json({ message: 'Processing record not found' });
+    }
+
+    res.json({ message: 'Processing record updated successfully', processor });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ----------------------
+// Get Batches Ready for Processing
+exports.getBatchesForProcessing = async (req, res) => {
+  try {
+    const batches = await Batch.find({
+      status: 'lab_approved'
+    }).populate('farmer', 'name contactNumber');
+
+    res.json({ batches });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ----------------------
+// Generate QR Code for Final Product
+exports.generateProductQR = async (req, res) => {
+  try {
+    const { processorId } = req.params;
+    
+    const processor = await Processor.findById(processorId)
+      .populate('batches', 'batchId species quantity geoTag')
+      .populate('labTestId', 'result testDate');
+
+    if (!processor) {
+      return res.status(404).json({ message: 'Processing record not found' });
+    }
+
+    // Generate QR code data
+    const qrData = {
+      productBatchId: processor.finalProductBatchId,
+      herbName: processor.herbName,
+      formulationType: processor.formulationType,
+      manufactureDate: processor.manufactureDate,
+      expiryDate: processor.expiryDate,
+      batches: processor.batches.map(b => ({
+        batchId: b.batchId,
+        species: b.species,
+        quantity: b.quantity,
+        geoTag: b.geoTag
+      })),
+      labTest: processor.labTestId ? {
+        result: processor.labTestId.result,
+        testDate: processor.labTestId.testDate
+      } : null
+    };
+
+    // Instead of raw JSON, encode as data URL to render as image or use URL target
+    const qrTargetUrl = `http://localhost:5173/verify?product=${encodeURIComponent(processor.finalProductBatchId)}`;
+    processor.qrCodeDataUrl = qrTargetUrl;
+    await processor.save();
+
+    res.json({ 
+      message: 'QR code generated successfully', 
+      qrData,
+      qrUrl: qrTargetUrl,
+      processorId: processor._id 
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

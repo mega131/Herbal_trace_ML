@@ -16,9 +16,13 @@ const app = express();
 
 const cors = require('cors');
 app.use(cors({
-    origin: 'https://ai-herb-tracker.onrender.com',
-    'http://127.0.0.1:5500',                 // local testing
-    'http://localhost:5500'                  // local testing
+    origin: [
+      'https://ai-herb-tracker.onrender.com',
+      'http://localhost:5173',
+      'http://127.0.0.1:5173',
+      'http://localhost:5500',
+      'http://127.0.0.1:5500'
+    ],
     methods: ['GET', 'POST', 'PUT', 'DELETE'],
     credentials: true
 }));
@@ -40,6 +44,7 @@ app.use("/api/farmer", require("./routes/farmerRoutes"));
 app.use("/api/lab", require("./routes/labRoutes")); 
 app.use("/api/agency", require("./routes/agencyRoutes")); 
 app.use("/api/batch", require("./routes/batchRoutes"));
+app.use("/api/blockchain", require("./routes/blockchainRoutes"));
 
 // ----------------------
 // Start Server

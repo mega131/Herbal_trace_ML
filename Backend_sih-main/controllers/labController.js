@@ -1,81 +1,158 @@
 const LabTest = require('../models/LabTest');
 const Batch = require('../models/Batch');
-const { evaluateLabTest } = require('../utils/validator');
-const blockchain = require('../blockchain/adapter-eth'); // or adapter-fabric
-const QR = require('../utils/qrcode');
 
-async function addLabTest(req, res) {
+// ----------------------
+// Create Lab Test
+exports.createLabTest = async (req, res) => {
   try {
-    const payload = req.body;
-    const batch = await Batch.findById(payload.batchId);
-    if (!batch) return res.status(404).json({ error: 'Batch not found' });
+    const {
+      batchId,
+      labName,
+      analystId,
+      testDate,
+      parameters,
+      result,
+      failReasons,
+      certificateUrl,
+      qrCode,
+      notes,
+      certificateId
+    } = req.body;
 
-    // ✅ Step 1: Evaluate test
-    const evaluation = evaluateLabTest(payload.parameters);
+    // Validate batch exists (support Mongo _id or business batchId like BATCH-XXXX)
+    let batch = null;
+    try { batch = await Batch.findById(batchId); } catch (e) { /* ignore cast error */ }
+    if (!batch) { batch = await Batch.findOne({ batchId }); }
+    if (!batch) return res.status(404).json({ message: 'Batch not found' });
 
-    // ✅ Step 2: Create LabTest doc
-    const labTestDoc = new LabTest({
-      batchId: payload.batchId,
-      labName: payload.labName,
-      analystId: payload.analystId,
-      parameters: payload.parameters,
-      result: evaluation.result,
-      failReasons: evaluation.failReasons,
-      certificateUrl: payload.certificateUrl
+    // Create lab test
+    const certificateUrlGenerated = `https://certs.example.com/lab/${Date.now()}_${Math.random().toString(36).slice(2,8)}`;
+
+    const labTest = new LabTest({
+      batchId,
+      labName,
+      analystId,
+      testDate: testDate || new Date(),
+      parameters: {
+        moisture: parameters.moisture,
+        pesticide_ppm: parameters.pesticide_ppm || {},
+        heavyMetals_ppm: parameters.heavyMetals_ppm || {},
+        ashContent: parameters.ashContent,
+        dnaBarcode: {
+          matched: parameters.dnaBarcode?.matched || false,
+          matchConfidence: parameters.dnaBarcode?.confidence || 0,
+          referenceId: parameters.dnaBarcode?.referenceId || ''
+        },
+        notes
+      },
+      result,
+      failReasons: failReasons || [],
+      certificateUrl: certificateUrl || certificateUrlGenerated,
+      qrCode: qrCode || `https://api.qrserver.com/v1/create-qr-code/?size=200x200&data=${encodeURIComponent(certificateUrl || certificateUrlGenerated)}`,
+      certificateId: certificateId || `CERT-${Date.now()}`
     });
 
-    await labTestDoc.save();
+    await labTest.save();
 
-    // ✅ Step 3: Update Batch with lab test info
-    batch.status = (evaluation.result === 'Pass') ? 'APPROVED' : 'REJECTED';
-    batch.labTestId = labTestDoc._id; // 🔗 link LabTest to Batch
-    batch.history = batch.history || [];
+    // Update batch with lab test reference
+    batch.labTestId = labTest._id;
+    batch.status = result === 'Pass' ? 'lab_approved' : 'lab_failed';
     batch.history.push({
-      step: 'Lab Test',
+      step: 'Lab Testing Completed',
       date: new Date(),
-      by: payload.labName,
-      remarks: evaluation.result
+      by: labName,
+      remarks: `Result: ${result}`
     });
     await batch.save();
 
-    // ✅ Step 4: Push minimal metadata to blockchain
-    const txRef = await blockchain.recordLabTest({
-      batchCode: batch.batchCode || batch.batchId, // use whichever field you maintain
-      labTestId: labTestDoc._id.toString(),
-      result: evaluation.result,
-      testDate: labTestDoc.testDate,
-    });
-
-    labTestDoc.txRef = txRef;
-    await labTestDoc.save();
-
-    // ✅ Step 5: Generate QR payload (optional, for lab record)
-    const qrData = {
-      batchCode: batch.batchCode || batch.batchId,
-      labTestId: labTestDoc._id.toString(),
-      txRef
-    };
-    const qrImageDataUrl = await QR.generateDataURL(JSON.stringify(qrData));
-
-    return res.status(201).json({
-      message: 'Lab test recorded',
-      labTest: labTestDoc,
-      qr: qrImageDataUrl
-    });
-
-  } catch (err) {
-    console.error('addLabTest error:', err);
-    return res.status(500).json({ error: err.message });
-  }
-}
-
-async function getLabTestsByBatch(req, res) {
-  try {
-    const tests = await LabTest.find({ batchId: req.params.batchId });
-    res.json(tests);
+    res.status(201).json({ message: 'Lab test created successfully', labTest });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
-}
+};
 
-module.exports = { addLabTest, getLabTestsByBatch };
+// ----------------------
+// Get Lab Tests
+exports.getLabTests = async (req, res) => {
+  try {
+    const { labName } = req.query;
+    
+    let query = {};
+    if (labName) {
+      query.labName = labName;
+    }
+
+    const labTests = await LabTest.find(query)
+      .populate('batchId', 'batchId species quantity geoTag')
+      .sort({ createdAt: -1 });
+
+    res.json({ labTests });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ----------------------
+// Get Lab Test by ID
+exports.getLabTestById = async (req, res) => {
+  try {
+    const { testId } = req.params;
+    
+    const labTest = await LabTest.findById(testId)
+      .populate('batchId', 'batchId species quantity geoTag farmer');
+
+    if (!labTest) {
+      return res.status(404).json({ message: 'Lab test not found' });
+    }
+
+    res.json({ labTest });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ----------------------
+// Update Lab Test
+exports.updateLabTest = async (req, res) => {
+  try {
+    const { testId } = req.params;
+    const updateData = req.body;
+
+    const labTest = await LabTest.findByIdAndUpdate(
+      testId,
+      updateData,
+      { new: true, runValidators: true }
+    );
+
+    if (!labTest) {
+      return res.status(404).json({ message: 'Lab test not found' });
+    }
+
+    // Update batch status if result changed
+    if (updateData.result) {
+      const batch = await Batch.findById(labTest.batchId);
+      if (batch) {
+        batch.status = updateData.result === 'Pass' ? 'lab_approved' : 'lab_failed';
+        await batch.save();
+      }
+    }
+
+    res.json({ message: 'Lab test updated successfully', labTest });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ----------------------
+// Get Batches Ready for Lab Testing
+exports.getBatchesForTesting = async (req, res) => {
+  try {
+    const batches = await Batch.find({
+      status: { $in: ['collected', 'received'] }
+    }).populate('farmer', 'name contactNumber');
+
+    res.json({ batches });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};

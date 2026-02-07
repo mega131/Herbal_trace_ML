@@ -66,6 +66,9 @@ const LandingPage: React.FC = () => {
             <button onClick={() => document.getElementById("about")?.scrollIntoView({ behavior: "smooth" })} className="text-green-600 font-medium hover:text-green-700 transition">
               About
             </button>
+            <button onClick={() => navigate("/demo")} className="text-blue-600 font-medium hover:text-blue-700 transition">
+              📱 Demo
+            </button>
             <button onClick={() => navigate("/login")} className="text-green-600 font-medium hover:text-green-700 transition">
               Login
             </button>
@@ -95,7 +98,7 @@ const LandingPage: React.FC = () => {
           </div>
         </div>
         <div className="md:w-1/2 mt-10 md:mt-0">
-          <img src="/herb-plant.jpg" alt="Herbs" className="rounded-xl shadow-xl w-full h-auto md:h-[400px] object-cover" />
+          <img src="/herb-plant.jpeg" alt="Herbs" className="rounded-xl shadow-xl w-full h-auto md:h-[400px] object-cover" />
         </div>
       </section>
 

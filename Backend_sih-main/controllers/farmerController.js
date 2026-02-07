@@ -22,12 +22,15 @@ exports.registerFarmer = async (req, res) => {
 
     const hashedPassword = await bcrypt.hash(password, 10);
 
+    // Map to schema fields
+    const farmLocation = typeof location === 'string' ? { address: location } : location;
+
     const farmer = new Farmer({
       name,
       email,
       password: hashedPassword,
-      location,
-      contact,
+      contactNumber: contact,
+      farmLocation,
       totalHarvested: 0,
       seasonalHarvest: {}
     });
@@ -43,9 +46,14 @@ exports.registerFarmer = async (req, res) => {
 // Add Batch
 exports.addBatch = async (req, res) => {
   try {
-    const { farmerId, species, quantity, latitude, longitude, photos, qualityScore, useAutoGPS } = req.body;
+    const { farmerId, email, species, quantity, latitude, longitude, photos, qualityScore, useAutoGPS } = req.body;
 
-    const farmer = await Farmer.findById(farmerId);
+    let farmer = null;
+    if (farmerId) {
+      farmer = await Farmer.findById(farmerId);
+    } else if (email) {
+      farmer = await Farmer.findOne({ email });
+    }
     if (!farmer) return res.status(404).json({ message: 'Farmer not found' });
 
     let lat = latitude, lng = longitude;
@@ -69,7 +77,7 @@ exports.addBatch = async (req, res) => {
     // ✅ Save batch in Batch collection
     const batch = await Batch.create({
       batchId: `BATCH-${uuidv4().split('-')[0].toUpperCase()}`,
-      farmer: farmerId,
+      farmer: farmer._id,
       species,
       quantity,
       geoTag: { latitude: lat, longitude: lng },
@@ -82,6 +90,36 @@ exports.addBatch = async (req, res) => {
     await farmer.save();
 
     res.status(201).json({ message: 'Batch added successfully', batch });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ----------------------
+// Get Farmer's Batches
+exports.getFarmerBatches = async (req, res) => {
+  try {
+    const { farmerId } = req.params;
+
+    const farmer = await Farmer.findById(farmerId);
+    if (!farmer) return res.status(404).json({ message: 'Farmer not found' });
+
+    const batches = await Batch.find({ farmer: farmerId }).sort({ createdAt: -1 });
+    res.json({ batches });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+};
+
+// ----------------------
+// Get Farmer by Email
+exports.getFarmerByEmail = async (req, res) => {
+  try {
+    const { email } = req.query;
+    if (!email) return res.status(400).json({ message: 'email is required' });
+    const farmer = await Farmer.findOne({ email });
+    if (!farmer) return res.status(404).json({ message: 'Farmer not found' });
+    res.json({ farmer });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

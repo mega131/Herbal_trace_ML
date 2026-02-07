@@ -89,3 +89,34 @@ export interface ProcessingRecord {
   batchNumber: string;
   qualityGrade: string;
 }
+
+// --- Backend-integrated types ---
+export interface GeoTag { latitude: number; longitude: number }
+
+export interface FarmerRef {
+  name?: string;
+  contactNumber?: string;
+  farmLocation?: string | GeoTag;
+  crops?: string[];
+}
+
+export interface BatchDoc {
+  _id: string;
+  batchId: string;
+  species: string;
+  quantity: number;
+  geoTag: GeoTag;
+  status?: string;
+}
+
+export interface ProcessorRecordDoc {
+  _id: string;
+  createdAt?: string;
+  qrCodeDataUrl?: string;
+}
+
+export interface BatchDetailsResponse {
+  batch: BatchDoc & { farmer?: FarmerRef };
+  processorRecords: ProcessorRecordDoc[];
+  finalQR?: string;
+}
